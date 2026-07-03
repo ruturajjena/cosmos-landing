@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cosmos — Technology that redefines interaction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+<style type="text/tailwindcss">
+  @theme {
+    --font-display: "Space Grotesk", sans-serif;
+    --font-body: "Inter", sans-serif;
+  }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+<style>
+  html { scroll-behavior: smooth; }
+  body { background: #000; font-family: Inter, sans-serif; }
+  ::selection { background: rgba(139, 92, 246, 0.45); color: #fff; }
+  ::-webkit-scrollbar { width: 10px; }
+  ::-webkit-scrollbar-track { background: #000; }
+  ::-webkit-scrollbar-thumb { background: #1c1c22; border-radius: 8px; border: 2px solid #000; }
+  ::-webkit-scrollbar-thumb:hover { background: #2d2d38; }
+
+  [data-reveal] {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 1s ease, transform 1s cubic-bezier(0.22, 1, 0.36, 1);
+    transition-delay: var(--d, 0ms);
+  }
+  [data-reveal].in { opacity: 1; transform: none; }
+
+  .gradient-text {
+    background: linear-gradient(100deg, #38bdf8 0%, #8b5cf6 34%, #ec4899 68%, #fb923c 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .tag-line { height: 1px; width: 2.5rem; background: linear-gradient(90deg, #8b5cf6, transparent); }
+
+  .btn-primary {
+    transition: box-shadow 0.4s ease, transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .btn-primary:hover {
+    box-shadow: 0 0 40px rgba(139, 92, 246, 0.55), 0 0 90px rgba(56, 189, 248, 0.25);
+    transform: translateY(-2px);
+  }
+  .btn-ghost {
+    transition: box-shadow 0.4s ease, border-color 0.4s ease, background-color 0.4s ease, transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .btn-ghost:hover {
+    border-color: rgba(236, 72, 153, 0.5);
+    background-color: rgba(236, 72, 153, 0.08);
+    box-shadow: 0 0 30px rgba(236, 72, 153, 0.25);
+    transform: translateY(-2px);
+  }
+  .nav-link { transition: color 0.3s ease; }
+  .nav-link:hover { color: #fff; }
+
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(7px); } }
+  .bob { animation: bob 2.2s ease-in-out infinite; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useEffect, useRef } = React;
+
+/* ============================================================
+   PARTICLE ENGINE
+   One fixed canvas. ~2200 particles morph between four shapes
+   (energy orb → wormhole helix → terrain wave → galaxy swirl)
+   driven by scroll position, with light mouse parallax.
+   ============================================================ */
+
+const PALETTE = [
+  [56, 189, 248],   // electric blue
+  [99, 102, 241],   // indigo
+  [139, 92, 246],   // deep violet
+  [236, 72, 153],   // hot pink
+  [251, 146, 60],   // cosmic orange
+];
+
+const fract = (x) => x - Math.floor(x);
+const clamp01 = (x) => Math.max(0, Math.min(1, x));
+const smooth = (x) => { x = clamp01(x); return x * x * (3 - 2 * x); };
+const lerp = (a, b, k) => a + (b - a) * k;
+
+function makeSprite(rgb) {
+  const s = document.createElement('canvas');
+  s.width = s.height = 64;
+  const g = s.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+  grad.addColorStop(0.2, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.85)`);
+  grad.addColorStop(0.55, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.22)`);
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return s;
+}
+
+function startEngine(canvas, getSections) {
+  const ctx = canvas.getContext('2d');
+  const sprites = PALETTE.map(makeSprite);
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  let w = 0, h = 0, dpr = 1, raf = 0;
+  let N = 2200;
+  let particles = [];
+  let stars = [];
+  let mx = 0, my = 0, smx = 0, smy = 0;   // mouse, smoothed mouse (-1..1)
+  let t = 0, tTarget = 0;                  // shape index 0..3 (continuous)
+  let pull = 0;                            // black-hole suction 0..1
+  const GA = Math.PI * (3 - Math.sqrt(5)); // golden angle
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    w = window.innerWidth;
+    h = window.innerHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    N = (w < 768 ? 2000 : 3200) * (reduced ? 0.6 : 1) | 0;
+    particles = Array.from({ length: N }, (_, i) => {
+      const u = (i + 0.5) / N;
+      const rnd = fract(Math.sin(i * 127.1 + 311.7) * 43758.5453);
+      const rnd2 = fract(Math.sin(i * 269.5 + 183.3) * 28001.8384);
+      // color follows u with dithered edges → smooth gradient bands across every shape
+      const c = Math.min(PALETTE.length - 1, Math.max(0, Math.floor((u + (rnd2 - 0.5) * 0.25) * PALETTE.length)));
+      // galaxy gets its own radius-based colors: pink core, violet mid, blue arms
+      const rg = 0.06 + 1.35 * Math.pow(fract(u * 13.71), 0.72);
+      const cg = rg < 0.38 ? 3 : rg < 0.75 ? 2 : (rnd2 < 0.6 ? 0 : 1);
+      return { i, u, rnd, rnd2, c, cg, rg, size: 1 + rnd * 1.8 };
+    });
+    stars = Array.from({ length: w < 768 ? 140 : 260 }, () => ({
+      x: Math.random() * w, y: Math.random() * h,
+      r: 0.4 + Math.random() * 1.1,
+      p: Math.random() * Math.PI * 2,
+      f: 0.3 + Math.random() * 1.2,
+    }));
+  }
+
+  /* ---- shape functions: return [x, y, z] in world units (~unit sphere) ---- */
+
+  function shapeOrb(p, T) {
+    const th = Math.acos(1 - 2 * p.u);          // fibonacci sphere
+    const ph = p.i * GA + T * 0.22;
+    const wob = 1 + 0.09 * Math.sin(th * 5 + T * 1.3 + p.rnd * 6.283)
+                  + 0.05 * Math.sin(ph * 3 - T * 0.9);
+    const st = Math.sin(th);
+    return [wob * st * Math.cos(ph), wob * Math.cos(th) * 1.02, wob * st * Math.sin(ph)];
+  }
+
+  function shapeHelix(p, T) {
+    const y = p.u * 2 - 1;                      // -1..1 down the column
+    const strand = p.i % 2 ? Math.PI : 0;
+    const ang = y * 4.6 + T * 0.85 + strand + (p.rnd - 0.5) * 0.35;
+    const r = (0.3 + 0.75 * y * y) * (1 + (p.rnd2 - 0.5) * 0.22);  // hourglass profile
+    return [r * Math.cos(ang), y * 1.18, r * Math.sin(ang)];
+  }
+
+  function shapeTerrain(p, T) {
+    // structured lattice receding into depth → reads as a topographic mesh
+    const COLS = 72;
+    const rows = Math.ceil(N / COLS);
+    const col = p.i % COLS, row = (p.i / COLS) | 0;
+    const gx = (col / (COLS - 1) * 2 - 1) * 2.8 + (p.rnd - 0.5) * 0.05;
+    const gz = 0.3 + (row / Math.max(1, rows - 1)) * 5.2 + (p.rnd2 - 0.5) * 0.06;
+    const y = 0.45
+      - 0.13 * Math.sin(gx * 1.6 + T * 0.8) * Math.cos(gz * 1.4 - T * 0.6)
+      - 0.06 * Math.sin(gx * 3.6 - T * 1.2 + gz * 1.8)
+      - 0.03 * Math.sin(gx * 7.0 + T * 1.9);
+    return [gx, y, gz];
+  }
+
+  function shapeGalaxy(p, T) {
+    let r = p.rg;
+    const arm = (p.i % 2) * Math.PI;
+    const spin = T * (0.35 + 0.9 / (0.3 + r)) * (1 + pull * 1.4);  // differential rotation, faster as the hole feeds
+    const ang = arm + r * 4.2 + spin + (p.rnd - 0.5) * (0.5 + r * 0.5);
+    r *= 1 - pull * (0.42 + 0.15 * p.rnd);      // suction toward the core
+    const y = (p.rnd2 - 0.5) * 0.16 * (1.3 - r * 0.6);
+    return [r * Math.cos(ang), y, r * Math.sin(ang)];
+  }
+
+  const SHAPES = [shapeOrb, shapeHelix, shapeTerrain, shapeGalaxy];
+  const TILT  = [-0.14, 0.05, 0.02, -0.38];    // camera rotX per shape
+  const YOFF  = [0.05, 0.0, 0.05, 0.03];       // vertical screen offset per shape
+  const ZOOM  = [0.30, 0.42, 0.70, 0.40];      // world→screen scale per shape
+
+  function updateScrollTarget() {
+    const secs = getSections();
+    if (!secs.length) return;
+    const mid = window.scrollY + h / 2;
+    const centers = secs.map((el) => el.offsetTop + el.offsetHeight / 2);
+    let tt = 0;
+    if (mid <= centers[0]) tt = 0;
+    else if (mid >= centers[centers.length - 1]) tt = centers.length - 1;
+    else {
+      for (let i = 0; i < centers.length - 1; i++) {
+        if (mid >= centers[i] && mid < centers[i + 1]) {
+          tt = i + smooth((mid - centers[i]) / (centers[i + 1] - centers[i]));
+          break;
+        }
+      }
+    }
+    tTarget = tt;
+    const doc = document.documentElement;
+    const distBottom = doc.scrollHeight - (window.scrollY + h);
+    pull = smooth(1 - distBottom / (h * 0.75));
+  }
+
+  function glow(cx, cy, radius, stops, alpha) {
+    if (alpha <= 0.004) return;
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    stops.forEach(([o, c]) => g.addColorStop(o, c));
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.globalAlpha = 1;
+  }
+
+  let T0 = performance.now();
+  let lastNow = T0;
+  function frame(now) {
+    const T = ((now - T0) / 1000) * (reduced ? 0.25 : 1);
+    const dt = Math.min(0.25, Math.max(0.001, (now - lastNow) / 1000));
+    lastNow = now;
+    updateScrollTarget();
+    // time-based damping → identical feel at any frame rate
+    t += (tTarget - t) * (1 - Math.exp(-4.5 * dt));
+    smx += (mx - smx) * (1 - Math.exp(-3.2 * dt));
+    smy += (my - smy) * (1 - Math.exp(-3.2 * dt));
+
+    ctx.clearRect(0, 0, w, h);
+
+    // faint nebula depth
+    glow(w * 0.2, h * 0.15, Math.max(w, h) * 0.7, [[0, 'rgba(139,92,246,0.07)'], [1, 'rgba(0,0,0,0)']], 1);
+    glow(w * 0.85, h * 0.85, Math.max(w, h) * 0.6, [[0, 'rgba(56,189,248,0.05)'], [1, 'rgba(0,0,0,0)']], 1);
+
+    // starfield
+    ctx.fillStyle = '#fff';
+    for (const s of stars) {
+      s.x += 0.72 * s.f * dt;
+      if (s.x > w + 2) s.x = -2;
+      const tw = 0.25 + 0.75 * Math.pow(Math.sin(T * s.f + s.p), 2);
+      ctx.globalAlpha = tw * 0.7;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, 6.283);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // blended camera params
+    const i0 = Math.min(Math.floor(t), SHAPES.length - 1);
+    const i1 = Math.min(i0 + 1, SHAPES.length - 1);
+    const k = smooth(t - i0);
+    const wGal = i1 === 3 ? k : (i0 === 3 ? 1 : 0);
+    const wOrb = i0 === 0 ? 1 - k : 0;
+    const tilt = lerp(TILT[i0], TILT[i1], k) + smy * 0.18;
+    const rotY = smx * 0.3;
+    const yoff = lerp(YOFF[i0], YOFF[i1], k) * h;
+    const S = Math.min(w, h) * lerp(ZOOM[i0], ZOOM[i1], k) * (w < 768 ? 1.1 : 1.3);
+    const cx = w / 2, cy = h / 2 + yoff;
+    const cosX = Math.cos(tilt), sinX = Math.sin(tilt);
+    const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+
+    // galaxy halo sits behind the particles
+    if (wGal > 0.01) {
+      glow(cx, cy, S * 1.5, [[0, 'rgba(99,102,241,0.32)'], [0.4, 'rgba(56,189,248,0.10)'], [1, 'rgba(0,0,0,0)']], wGal * (0.5 + pull * 0.3));
+    }
+
+    ctx.globalCompositeOperation = 'lighter';
+    const fA = SHAPES[i0], fB = SHAPES[i1];
+    const persF = 4.5;
+    for (const p of particles) {
+      let x, y, z;
+      if (k < 0.001 || i0 === i1) { [x, y, z] = fA(p, T); }
+      else if (k > 0.999) { [x, y, z] = fB(p, T); }
+      else {
+        const a = fA(p, T), b = fB(p, T);
+        x = lerp(a[0], b[0], k); y = lerp(a[1], b[1], k); z = lerp(a[2], b[2], k);
+      }
+      // rotate Y (mouse), then X (camera tilt)
+      let x1 = x * cosY - z * sinY;
+      let z1 = x * sinY + z * cosY;
+      let y1 = y * cosX - z1 * sinX;
+      let z2 = y * sinX + z1 * cosX;
+
+      const per = persF / (persF + z2);
+      if (per <= 0) continue;
+      const sx = cx + x1 * S * per;
+      const sy = cy + y1 * S * per;
+      if (sx < -20 || sx > w + 20 || sy < -20 || sy > h + 20) continue;
+
+      const d = p.size * per * (1.8 + wGal * pull * 0.7);
+      ctx.globalAlpha = clamp01(0.7 * per - 0.1) * (0.72 + 0.28 * Math.sin(T * 2 + p.i));
+      ctx.drawImage(sprites[wGal > 0.5 ? p.cg : p.c], sx - d * 2, sy - d * 2, d * 4, d * 4);
+    }
+    ctx.globalAlpha = 1;
+
+    // luminous cores
+    const wTer = i1 === 2 ? k : (i0 === 2 ? 1 - k : 0);
+    if (wTer > 0.01) {
+      // flattened orange glow along the terrain horizon
+      ctx.save();
+      ctx.translate(cx, cy + S * 0.16);
+      ctx.scale(1, 0.22);
+      glow(0, 0, S * 1.15, [[0, 'rgba(251,146,60,0.5)'], [0.5, 'rgba(236,72,153,0.15)'], [1, 'rgba(0,0,0,0)']], wTer * 0.6);
+      ctx.restore();
+    }
+    if (wOrb > 0.01) {
+      glow(cx, cy, S * 0.55, [[0, 'rgba(167,139,250,0.5)'], [0.5, 'rgba(56,189,248,0.12)'], [1, 'rgba(0,0,0,0)']], wOrb * 0.55);
+    }
+    if (wGal > 0.01) {
+      glow(cx, cy, S * (0.3 + pull * 0.12), [[0, 'rgba(255,255,255,0.9)'], [0.16, 'rgba(244,114,182,0.6)'], [0.45, 'rgba(139,92,246,0.16)'], [1, 'rgba(0,0,0,0)']], wGal * (0.55 + pull * 0.25));
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    raf = requestAnimationFrame(frame);
+  }
+
+  const onMouse = (e) => {
+    mx = (e.clientX / w) * 2 - 1;
+    my = (e.clientY / h) * 2 - 1;
+  };
+  window.addEventListener('resize', resize);
+  window.addEventListener('mousemove', onMouse, { passive: true });
+  resize();
+  raf = requestAnimationFrame(frame);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.removeEventListener('resize', resize);
+    window.removeEventListener('mousemove', onMouse);
+  };
+}
+
+/* ============================================================
+   UI COMPONENTS
+   ============================================================ */
+
+const ArrowIcon = ({ className = 'w-3.5 h-3.5' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </svg>
+);
+
+const SparkIcon = ({ className = 'w-4 h-4' }) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2l2.1 6.6L21 11l-6.9 2.4L12 20l-2.1-6.6L3 11l6.9-2.4L12 2z" />
+  </svg>
+);
+
+function Tag({ children }) {
+  return (
+    <div className="flex items-center justify-center gap-3 text-[11px] font-semibold tracking-[0.32em] uppercase text-white/50" data-reveal>
+      <span className="tag-line" />
+      <span>{children}</span>
+      <span className="tag-line" style={{ transform: 'scaleX(-1)' }} />
+    </div>
+  );
+}
+
+function PrimaryBtn({ children, href = '#' }) {
+  return (
+    <a href={href} className="btn-primary group inline-flex items-center gap-2.5 rounded-full bg-white px-7 py-3.5 text-sm font-semibold text-black">
+      {children}
+      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black text-white transition-transform duration-300 group-hover:translate-x-0.5">
+        <ArrowIcon className="w-3 h-3" />
+      </span>
+    </a>
+  );
+}
+
+function GhostBtn({ children, href = '#' }) {
+  return (
+    <a href={href} className="btn-ghost inline-flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.04] px-7 py-3.5 text-sm font-semibold text-white/90 backdrop-blur-md">
+      {children}
+    </a>
+  );
+}
+
+function Nav() {
+  const links = ['Product', 'Solutions', 'Pricing', 'Docs'];
+  return (
+    <nav className="fixed left-1/2 top-4 z-50 -translate-x-1/2">
+      <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.05] py-1.5 pl-4 pr-1.5 shadow-[0_8px_40px_rgba(0,0,0,0.6)] backdrop-blur-md">
+        <a href="#hero" className="mr-2 flex items-center gap-2 text-sm font-bold tracking-wide text-white font-display">
+          <span className="h-2.5 w-2.5 rounded-full bg-gradient-to-tr from-sky-400 via-violet-500 to-pink-500 shadow-[0_0_12px_rgba(139,92,246,0.9)]" />
+          Cosmos
+        </a>
+        <div className="hidden items-center md:flex">
+          {links.map((l) => (
+            <a key={l} href={`#${l === 'Product' ? 'hero' : l === 'Solutions' ? 'gravity' : l === 'Pricing' ? 'growth' : 'universe'}`} className="nav-link px-3.5 py-1.5 text-[13px] font-medium text-white/60">
+              {l}
+            </a>
+          ))}
+        </div>
+        <a href="#" className="nav-link hidden px-3.5 py-1.5 text-[13px] font-medium text-white/60 sm:block">Sign in</a>
+        <a href="#universe" className="btn-primary group ml-1 flex items-center gap-2 rounded-full bg-white px-4.5 py-2 pl-4 pr-2 text-[13px] font-semibold text-black">
+          Get started
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black text-white">
+            <ArrowIcon className="w-2.5 h-2.5" />
+          </span>
+        </a>
+      </div>
+    </nav>
+  );
+}
+
+function Hero() {
+  return (
+    <section id="hero" data-shape className="relative flex min-h-screen flex-col items-center justify-center px-6 text-center">
+      <Tag>01 — The Future of Interaction</Tag>
+      <h1 className="mt-7 max-w-5xl font-display text-5xl font-bold leading-[1.02] tracking-tight text-white sm:text-6xl md:text-7xl" data-reveal style={{ '--d': '120ms' }}>
+        Technology that <span className="gradient-text">redefines</span>
+        <br className="hidden sm:block" /> interaction
+      </h1>
+      <p className="mt-7 max-w-xl text-base leading-relaxed text-white/55 md:text-lg" data-reveal style={{ '--d': '240ms' }}>
+        Cosmos fuses quantum-grade computation with human intuition — turning
+        raw data into gravity your product can feel.
+      </p>
+      <div className="mt-10 flex flex-wrap items-center justify-center gap-4" data-reveal style={{ '--d': '360ms' }}>
+        <PrimaryBtn href="#gravity">Get started</PrimaryBtn>
+        <GhostBtn href="#universe">See back-end tech</GhostBtn>
+      </div>
+      <a href="#gravity" className="absolute bottom-8 flex flex-col items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.3em] text-white/35" data-reveal style={{ '--d': '600ms' }}>
+        Scroll to explore
+        <span className="bob text-white/50">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+        </span>
+      </a>
+    </section>
+  );
+}
+
+function Stats() {
+  const stats = [
+    { v: '2,400%+', l: 'Average pipeline growth', c: 'from-sky-400 to-violet-500' },
+    { v: '12ms', l: 'Global response latency', c: 'from-violet-500 to-fuchsia-500' },
+    { v: '99.99%', l: 'Orbital uptime, guaranteed', c: 'from-fuchsia-500 to-pink-500' },
+    { v: '40K+', l: 'Teams in the constellation', c: 'from-pink-500 to-orange-400' },
+  ];
+  return (
+    <section id="gravity" data-shape className="relative flex min-h-screen flex-col items-center justify-center px-6 py-28 text-center">
+      <Tag>02 — Measurable Gravity</Tag>
+      <h2 className="mt-7 max-w-3xl font-display text-4xl font-bold leading-tight tracking-tight text-white sm:text-5xl md:text-6xl" data-reveal style={{ '--d': '120ms' }}>
+        Performance measured in light-years,
+        <span className="gradient-text"> delivered in milliseconds.</span>
+      </h2>
+      <p className="mt-6 max-w-xl text-base leading-relaxed text-white/55" data-reveal style={{ '--d': '240ms' }}>
+        Every interaction accelerates through our wormhole architecture —
+        entangled data pipelines that compress distance between question and answer.
+      </p>
+      <div className="mt-16 grid w-full max-w-5xl grid-cols-2 gap-x-6 gap-y-12 lg:grid-cols-4">
+        {stats.map((s, i) => (
+          <div key={s.v} data-reveal style={{ '--d': `${300 + i * 120}ms` }}>
+            <div className={`bg-gradient-to-r ${s.c} bg-clip-text font-display text-4xl font-bold tracking-tight text-transparent sm:text-5xl`}>{s.v}</div>
+            <div className="mt-3 text-xs font-medium uppercase tracking-[0.18em] text-white/45">{s.l}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function Growth() {
+  return (
+    <section id="growth" data-shape className="relative flex min-h-screen items-center px-6 py-28">
+      <div className="mx-auto grid w-full max-w-6xl items-center gap-14 lg:grid-cols-2">
+        <div>
+          <div className="flex items-center gap-3 text-[11px] font-semibold tracking-[0.32em] uppercase text-white/50" data-reveal>
+            <span className="text-white/70">03</span>
+            <span className="tag-line" />
+            <span>The Pull of Results</span>
+          </div>
+          <h2 className="mt-7 font-display text-4xl font-bold leading-[1.05] tracking-tight text-white sm:text-5xl md:text-6xl" data-reveal style={{ '--d': '120ms' }}>
+            Everything revolves around one thing—<span className="gradient-text">your growth.</span>
+          </h2>
+        </div>
+        <div className="lg:pt-24">
+          <p className="max-w-md text-base leading-relaxed text-white/55 md:text-lg" data-reveal style={{ '--d': '240ms' }}>
+            Thousands of data points. One centre of gravity. We turn the noise of
+            information into a focused point of energy for your business.
+          </p>
+          <div className="mt-9 flex flex-wrap items-center gap-4" data-reveal style={{ '--d': '360ms' }}>
+            <PrimaryBtn href="#universe">Start your free trial</PrimaryBtn>
+            <GhostBtn href="#universe">Book a demo</GhostBtn>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Universe() {
+  return (
+    <section id="universe" data-shape className="relative flex min-h-screen flex-col items-center justify-center px-6 pb-32 pt-28 text-center">
+      <Tag>04 — Our Product Ecosystem</Tag>
+      <h2 className="mt-7 max-w-4xl font-display text-4xl font-bold leading-tight tracking-tight text-white sm:text-5xl md:text-6xl" data-reveal style={{ '--d': '120ms' }}>
+        A universe of possibilities —<br className="hidden sm:block" />
+        <span className="gradient-text">already in motion.</span>
+      </h2>
+      <p className="mt-64 max-w-xl text-base leading-relaxed text-white/55 sm:mt-72" data-reveal style={{ '--d': '200ms' }}>
+        Our platform is not a single tool. It's a living ecosystem with your
+        business at its core — services, partners, and data orbiting around you.
+      </p>
+      <div className="mt-9 flex flex-wrap items-center justify-center gap-4" data-reveal style={{ '--d': '320ms' }}>
+        <PrimaryBtn href="#hero">Explore the ecosystem</PrimaryBtn>
+        <GhostBtn href="#hero">View integrations</GhostBtn>
+      </div>
+    </section>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="relative border-t border-white/[0.07] px-6 py-9">
+      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-5 sm:flex-row">
+        <div className="flex items-center gap-2 text-sm font-bold text-white font-display">
+          <span className="h-2 w-2 rounded-full bg-gradient-to-tr from-sky-400 via-violet-500 to-pink-500" />
+          Cosmos
+        </div>
+        <div className="flex items-center gap-7 text-[13px] text-white/40">
+          <a href="#" className="nav-link">Privacy</a>
+          <a href="#" className="nav-link">Terms</a>
+          <a href="#" className="nav-link">X / Twitter</a>
+          <a href="#" className="nav-link">GitHub</a>
+        </div>
+        <div className="flex items-center gap-1.5 text-[13px] text-white/35">
+          <SparkIcon className="h-3 w-3 text-violet-400" />
+          © 2026 Cosmos Technologies
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+function App() {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const stop = startEngine(canvasRef.current, () =>
+      Array.from(document.querySelectorAll('[data-shape]'))
+    );
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((e) => e.isIntersecting && e.target.classList.add('in')),
+      { threshold: 0.15 }
+    );
+    document.querySelectorAll('[data-reveal]').forEach((el) => io.observe(el));
+    return () => { stop(); io.disconnect(); };
+  }, []);
+
+  return (
+    <div className="relative font-body">
+      <canvas ref={canvasRef} className="pointer-events-none fixed inset-0 z-0" />
+      <div className="relative z-10">
+        <Nav />
+        <Hero />
+        <Stats />
+        <Growth />
+        <Universe />
+        <Footer />
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
